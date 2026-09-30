@@ -95,6 +95,7 @@ Evaluated against 297 normal sources and synthetic attack profiles:
 | **Normal traffic** | **0%** | — | — |
 
 ---
+<img width="1093" height="631" alt="Captura de pantalla 2026-09-30 160617" src="https://github.com/user-attachments/assets/3034dd7a-80da-4d20-8948-6421b24360d1" />
 
 ## AWS & Terraform
 
