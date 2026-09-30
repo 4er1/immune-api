@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "immune-api"
+version = "0.1.0"
+description = "An artificial-immune-system style IDS for serverless APIs: an autoencoder trained on normal traffic metadata blocks Denial-of-Wallet and other anomalous sources"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+# Needed only for training and for the test suite - never for the deployed Lambda (see immune/model.py
+# vs immune/train.py, and scripts/build_lambda.sh, which strips train.py from the package).
+train = ["numpy>=1.24"]
+test = ["numpy>=1.24", "pyyaml", "pytest>=8", "pytest-cov"]   # pyyaml is only needed by tests/test_deploy_files.py
+
+[project.scripts]
+immune-train = "immune.train:main"
+immune-simulate = "immune.simulate:main"
+
+[tool.setuptools]
+packages = ["immune"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

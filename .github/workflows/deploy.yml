@@ -1,0 +1,104 @@
+name: train, evaluate and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      guard_mode:
+        description: "enforce (block) or monitor (log only)"
+        required: false
+        default: "monitor"
+        type: choice
+        options: [monitor, enforce]
+
+# Only one deploy at a time - Terraform state does not tolerate concurrent applies.
+concurrency:
+  group: immune-api-deploy
+  cancel-in-progress: false
+
+jobs:
+  train-and-evaluate:
+    runs-on: ubuntu-latest
+    outputs:
+      threshold: ${{ steps.summary.outputs.threshold }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[train]"
+
+      - name: Unit tests (fail fast before spending time training)
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Train the autoencoder on synthetic 'self' traffic
+        run: scripts/train_model.sh
+
+      - name: Evaluate against synthetic attacks
+        run: scripts/evaluate_model.sh model/model.json
+
+      - name: Gate the build on minimum detection quality
+        run: python3 scripts/check_thresholds.py build/eval_summary.json
+
+      - name: Package the Lambda deployment zip
+        run: scripts/build_lambda.sh model/model.json
+
+      - id: summary
+        run: echo "threshold=$(python3 -c "import json; print(json.load(open('model/model.json'))['threshold'])")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lambda-package
+          path: |
+            build/app.zip
+            model/model.json
+            build/eval_summary.json
+          retention-days: 90
+
+  deploy:
+    needs: train-and-evaluate
+    # Deploy only when triggered by hand (Actions tab -> Run workflow). A plain push still trains,
+    # evaluates and gates the model, but never touches AWS - so the repo works without any secrets.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # Terraform credentials are real AWS access - only ever run this job from the repo the secrets
+    # belong to, never from a fork's pull_request event (see the `on:` block above: no PR trigger).
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: lambda-package
+          path: .
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.5"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" -backend-config="key=immune-api/terraform.tfstate" -backend-config="region=${{ vars.AWS_REGION || 'us-east-1' }}"
+
+      - name: Terraform plan
+        working-directory: terraform
+        run: |
+          terraform plan -out=tfplan \
+            -var="lambda_zip_path=../build/app.zip" \
+            -var="guard_mode=${{ inputs.guard_mode || 'monitor' }}" \
+            -var="alert_email=${{ secrets.ALERT_EMAIL || '' }}"
+
+      - name: Terraform apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Show the deployed API URL
+        working-directory: terraform
+        run: terraform output api_url

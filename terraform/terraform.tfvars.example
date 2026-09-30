@@ -1,0 +1,5 @@
+project_name = "immune-api"
+environment  = "dev"
+aws_region   = "us-east-1"
+guard_mode   = "monitor"    # start in monitor mode, watch CloudWatch, then switch to "enforce"
+alert_email  = ""           # e.g. "you@example.com" - you'll get a confirmation email to accept
